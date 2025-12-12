@@ -1,0 +1,174 @@
+// /pbltes/web/src/App.js (Disesuaikan)
+
+import React, { useState, useEffect } from 'react';
+import { io } from "socket.io-client";
+// 💡 Ganti axios dengan helper API
+import { getTodaysSchedule, getHealth } from './services/api'; 
+import { format } from 'date-fns';
+import { id } from 'date-fns/locale';
+import './App.css';
+
+// 💡 Ambil URL dari api.js jika memungkinkan, jika tidak, pakai hardcode
+// Asumsi: Jika client tidak menggunakan Vite/CRA ENV, harus disesuaikan
+const SERVER_URL = "http://172.18.242.215:5000"; 
+
+function App() {
+    const [status, setStatus] = useState({});
+    const [schedule, setSchedule] = useState([]);
+    // Status awal TIdAK DIKETAHUI
+    const [health, setHealth] = useState({ esp32: 'UNKNOWN', raspi: 'UNKNOWN' }); 
+    const [currentTime, setCurrentTime] = useState(new Date());
+
+    // 💡 TAMBAHKAN STATE BARU UNTUK METRIK
+    const [metrics, setMetrics] = useState({
+        yolo_ms: null,
+        rfid_total_ms: null,
+        ws_latency_ms: null
+    });
+    // ----------------------------------------
+
+    useEffect(() => {
+        // 1. Mengambil data jadwal HARI INI dan Health awal menggunakan API helper
+        const fetchData = async () => {
+            try {
+                // Ambil Jadwal
+                const scheduleData = await getTodaysSchedule();
+                setSchedule(scheduleData);
+                
+                // Ambil Health Awal
+                const healthData = await getHealth();
+                setHealth(healthData.device_health); // Sesuaikan dengan payload Flask: device_health
+                
+            } catch (error) {
+                console.error("Error mengambil data awal:", error);
+                setSchedule([]);
+            }
+        };
+        fetchData();
+
+        // 2. Membuat koneksi WebSocket untuk data real-time
+        const socket = io(SERVER_URL);
+        socket.on('connect', () => console.log("Terhubung ke server WebSocket"));
+
+        // Listener untuk pembaruan status kelas
+        socket.on('update_status', (data) => {
+            console.log("Menerima pembaruan status:", data);
+            
+            // 💡 HITUNG LATENSI WS
+            if (data.server_timestamp_ms) {
+                const latency = Date.now() - data.server_timestamp_ms;
+                setMetrics(prevMetrics => ({
+                    ...prevMetrics,
+                    ws_latency_ms: latency.toFixed(0)
+                }));
+            }
+            setStatus(data);
+        });
+
+        // Listener untuk pembaruan status kesehatan sistem
+        socket.on('update_health', (data) => {
+            console.log("Menerima pembaruan kesehatan sistem:", data);
+            setHealth(data);
+        });
+
+        // 💡 LISTENER BARU UNTUK METRICS (yolo_ms, rfid_total_ms)
+        socket.on('update_metrics', (data) => {
+            console.log("Menerima pembaruan metrik:", data);
+            const { server_timestamp_ms, ...restData } = data;
+            setMetrics(prevMetrics => ({ ...prevMetrics, ...restData }));
+        });
+        // ---------------------------------------------
+
+        // 3. Timer untuk memperbarui waktu saat ini
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+
+        // 4. Fungsi cleanup
+        return () => {
+            socket.disconnect();
+            clearInterval(timer);
+        };
+    }, []); // Array dependensi kosong
+
+    // Fungsi untuk menentukan kelas CSS berdasarkan status jadwal
+    const getScheduleItemClass = (item) => {
+        const now = format(currentTime, 'HH:mm');
+        if (status.status_kelas === 'Sedang Mengajar' && status.id_jadwal === item.id_jadwal) {
+            return 'active'; // Kelas yang sedang berlangsung
+        }
+        if (now > item.jam_selesai) {
+            return 'past'; // Kelas yang sudah lewat
+        }
+        return 'upcoming'; // Kelas yang akan datang
+    };
+
+    // Fungsi untuk menentukan kelas CSS berdasarkan status kesehatan
+    const getHealthClass = (s) => {
+        if (s === 'ONLINE') return 'online';
+        if (s === 'OFFLINE') return 'offline';
+        if (s === 'UNKNOWN' || s === 'TIDAK DIKETAHUI') return 'unknown';
+        return 'unknown';
+    };
+
+    return (
+        <div className="container">
+            <header>
+                <h1>Smart Class Status (TMJ CCIT 5B)</h1>
+                <div className="health-panel">
+                    <span>Status Sistem:</span>
+                    <span className={`health-status ${getHealthClass(health.esp32)}`}>Absensi (ESP32)</span>
+                    <span className={`health-status ${getHealthClass(health.raspi)}`}>Kamera (Raspi)</span>
+                </div>
+            </header>
+
+            <main>
+                <section className="status-section">
+                    <h2>Status Kelas Saat Ini</h2>
+                    
+                    {/* Status Card */}
+                    <div className={`status-card ${status.status_kelas === 'Sedang Mengajar' ? 'active-class' : ''}`}>
+                        <h3>{status.status_kelas || 'Selesai'}</h3>
+                        <div className="status-details">
+                            <p><strong>Dosen:</strong> {status.nama_dosen || '-'}</p>
+                            <p><strong>Mata Kuliah:</strong> {status.nama_matkul || '-'}</p>
+                            <p><strong>Jam Masuk:</strong> {status.waktu_masuk || '-'}</p>
+                            <p><strong>Mhs (Live):</strong> {status.jml_mahasiswa_masuk ?? '-'}</p>
+                            <p><strong>Jam Keluar:</strong> {status.waktu_keluar || '-'}</p>
+                            <p><strong>Foto Tap In:</strong> {status.foto_masuk_path ? (<a href={`${SERVER_URL}/static/${status.foto_masuk_path.split('/').pop()}`} target="_blank" rel="noopener noreferrer">Lihat</a>) : '-'}</p>
+                        </div>
+                    </div>
+                    
+                    {/* 💡 Panel Metrik */}
+                    <div className="metrics-panel">
+                        <h3>Metrik Performa</h3>
+                        <div className="metrics-details">
+                            <p><strong>Deteksi YOLO (Raspi):</strong> <span>{metrics.yolo_ms ? `${metrics.yolo_ms.toFixed(0)} ms` : '-'}</span></p>
+                            <p><strong>Proses RFID (Server):</strong> <span>{metrics.rfid_total_ms ? `${metrics.rfid_total_ms.toFixed(0)} ms` : '-'}</span></p>
+                            <p><strong>Latensi Dashboard (WS):</strong> <span>{metrics.ws_latency_ms ? `${metrics.ws_latency_ms} ms` : '-'}</span></p>
+                        </div>
+                    </div>
+                    {/* ----------------------------- */}
+
+                </section>
+
+                <section className="schedule-section">
+                    <h2>Jadwal Hari Ini ({format(currentTime, 'EEEE, dd MMMM yyyy', { locale: id })})</h2>
+                    <div className="timeline">
+                        {schedule.length > 0 ? schedule.map((item, i) => (
+                            <div key={item.id_jadwal || i} className={`timeline-item ${getScheduleItemClass(item)}`}>
+                                <div className="timeline-time">{item.jam_mulai} - {item.jam_selesai}</div>
+                                <div className="timeline-content">
+                                    <strong>{item.nama_matkul}</strong>
+                                    <p>{item.nama_dosen}</p>
+                                </div>
+                            </div>
+                        )) : (
+                            <p className="no-schedule">Tidak ada jadwal ditemukan hari ini.</p>
+                        )}
+                    </div>
+                </section>
+            </main>
+        </div>
+    );
+}
+
+export default App;

@@ -1,0 +1,20 @@
+/* /pbltes/web/src/App.css (Minimal untuk Tailwind) */
+
+/* Base styles / Tailwind base */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tambahkan font Inter jika digunakan */
+/* @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap'); */
+
+/* Global fallbacks */
+body {
+    margin: 0;
+    font-family: 'Inter', sans-serif; /* Ganti font-family jika menggunakan font lain */
+    background-color: #f3f4f6; /* Warna latar belakang umum */
+    color: #1f2937; /* Warna teks umum */
+}
+
+/* Jika Anda tidak menginstal Tailwind dan hanya menggunakan CDN (seperti di App.jsx), 
+   Anda tidak perlu file App.css ini sama sekali, kecuali untuk import font. */
